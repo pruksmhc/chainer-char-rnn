@@ -3,17 +3,18 @@ import time
 import math
 import sys
 import argparse
-import cPickle as pickle
+import pickle
 import copy
 import os
 import codecs
 
 import numpy as np
-from chainer import cuda, Variable, FunctionSet, optimizers
+from chainer import cuda, Variable, ChainList, optimizers
 import chainer.functions as F
 from CharRNN import CharRNN, make_initial_state
 
 # input data
+# Open-sourcing stuff.
 def load_data(args):
     vocab = {}
     print ('%s/input.txt'% args.data_dir)
@@ -24,8 +25,8 @@ def load_data(args):
         if word not in vocab:
             vocab[word] = len(vocab)
         dataset[i] = vocab[word]
-    print 'corpus length:', len(words)
-    print 'vocab size:', len(vocab)
+    print('corpus length:', len(words))
+    print('vocab size:', len(vocab))
     return dataset, words, vocab
 
 # arguments
@@ -84,34 +85,32 @@ if args.gpu >= 0:
 else:
     accum_loss   = Variable(np.zeros((), dtype=np.float32))
 
-print 'going to train {} iterations'.format(jump * n_epochs)
-for i in xrange(jump * n_epochs):
-    x_batch = np.array([train_data[(jump * j + i) % whole_len]
-                        for j in xrange(batchsize)])
-    y_batch = np.array([train_data[(jump * j + i + 1) % whole_len]
-                        for j in xrange(batchsize)])
+print('going to train {} iterations'.format(jump * n_epochs))
+for i in range(int(jump * n_epochs)):
+    x_batch = []
+    y_batch = []
+    for j in range(batchsize):
+        x_batch.append(train_data[int((jump * j + i) % whole_len)])
+        y_batch.append(train_data[int((jump * j + i + 1) % whole_len)])
 
     if args.gpu >=0:
         x_batch = cuda.to_gpu(x_batch)
         y_batch = cuda.to_gpu(y_batch)
 
-    state, loss_i = model.forward_one_step(x_batch, y_batch, state, dropout_ratio=args.dropout)
+    state, loss_i = model.forward_one_step(np.array(x_batch), np.array(y_batch), state, dropout_ratio=args.dropout)
     accum_loss   += loss_i
 
     if (i + 1) % bprop_len == 0:  # Run truncated BPTT
         now = time.time()
-        print '{}/{}, train_loss = {}, time = {:.2f}'.format((i+1)/bprop_len, jump, accum_loss.data / bprop_len, now-cur_at)
+        print('{}/{}, train_loss = {}, time = {:.2f}'.format((i+1)/bprop_len, jump, accum_loss.data / bprop_len, now-cur_at))
         cur_at = now
 
-        optimizer.zero_grads()
         accum_loss.backward()
         accum_loss.unchain_backward()  # truncate
         if args.gpu >= 0:
             accum_loss = Variable(cuda.zeros(()))
         else:
             accum_loss = Variable(np.zeros((), dtype=np.float32))
-
-        optimizer.clip_grads(grad_clip)
         optimizer.update()
 
     if (i + 1) % 10000 == 0:
@@ -124,6 +123,6 @@ for i in xrange(jump * n_epochs):
 
         if epoch >= args.learning_rate_decay_after:
             optimizer.lr *= args.learning_rate_decay
-            print 'decayed learning rate by a factor {} to {}'.format(args.learning_rate_decay, optimizer.lr)
+            print('decayed learning rate by a factor {} to {}'.format(args.learning_rate_decay, optimizer.lr))
 
     sys.stdout.flush()
